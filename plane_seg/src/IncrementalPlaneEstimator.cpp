@@ -8,6 +8,11 @@ Eigen::Vector4f IncrementalPlaneEstimator::
 getPlane(const Eigen::Vector3d& iSum,
          const Eigen::Matrix3d& iSumSquared,
          const double iCount) {
+  /*
+  This function is to fit a plane with sum and sumsquare of iCount points
+  Why they don't use the same method as estimatefull of PlaneFitter.
+  */
+
   Eigen::Vector3d mean = iSum/iCount;
   Eigen::Matrix3d cov = iSumSquared/iCount - mean*mean.transpose();
   Eigen::Vector4d plane;
@@ -55,10 +60,20 @@ computeErrors(const Eigen::Vector4f& iPlane,
 
 bool IncrementalPlaneEstimator::
 tryPoint(const Eigen::Vector3f& iPoint, const float iMaxError) {
+  /*
+  This function is to get whether the new point iPoint can be added 
+  to the current points mPoints as an inlier.
+
+  First, get the new plane with both iPoint and mPoints.
+  Then, compute the error of each point from the plane, including mPoints and iPoint.
+  If all errors are smaller than the threshold (all n+1 points are inliers),
+  the new point iPoint can be added to mPoints to form a new plane.
+  */
+
   const int n = mPoints.size();
   if (n <= 2) return true;
   Eigen::Vector3d p = iPoint.cast<double>();
-  Eigen::Vector3d sum = mSum+p;
+  Eigen::Vector3d sum = mSum + p;
   Eigen::Matrix3d sumSquared = mSumSquared + p*p.transpose();
   Eigen::Vector4f plane = getPlane(sum, sumSquared, n+1);
   std::vector<float> errors2 = computeErrors(plane, mPoints);
@@ -76,6 +91,19 @@ tryPoint(const Eigen::Vector3f& iPoint, const float iMaxError) {
 bool IncrementalPlaneEstimator::
 tryPoint(const Eigen::Vector3f& iPoint, const Eigen::Vector3f& iNormal,
          const float iMaxError, const float iMaxAngle) {
+  /*
+  This function is to get whether the new point iPoint can be added 
+  to the current points mPoints as an inlier.
+
+  First, get the new plane with both iPoint and mPoints, and current plane with only mPoints.
+  If the angle between the normal at the new point iPoint and the normal of current plane
+  is larger than the angle threshold, we discard iPoint. 
+  Then, compute the previous errors of mPoints from the current plane and
+  new errors of mPoints and iPoint from the new plane.
+  If the difference bewteen the current errors and new errors are smaller than the threshold,
+  the new point iPoint can be added to mPoints to form a new plane.
+  */
+
   const int n = mPoints.size();
   if (n < 2) return true;
 
@@ -83,10 +111,15 @@ tryPoint(const Eigen::Vector3f& iPoint, const Eigen::Vector3f& iNormal,
   Eigen::Vector3d sum = mSum+p;
   Eigen::Matrix3d sumSquared = mSumSquared + p*p.transpose();
   Eigen::Vector4f plane = getPlane(sum, sumSquared, n+1);
-  if (std::abs(plane.head<3>().cast<float>().dot(iNormal)) <
+  Eigen::Vector4f currentPlane = getCurrentPlane();
+  // It might be better if we compute the angle 
+  // between the normal of CURRENT plane and the normal at iPoint. (?)
+  // if (std::abs(plane.head<3>().cast<float>().dot(iNormal)) <
+  //     std::cos(iMaxAngle)) return false;
+  if (std::abs(currentPlane.head<3>().cast<float>().dot(iNormal)) <
       std::cos(iMaxAngle)) return false;
 
-  std::vector<float> prevErrors2 = computeErrors(getCurrentPlane(), mPoints);
+  std::vector<float> prevErrors2 = computeErrors(currentPlane, mPoints);
   // NB: Using Eigen's sum redux is significantly faster than std::accumulate
   float prevTotalError2 = Eigen::Map<Eigen::VectorXf>(prevErrors2.data(), prevErrors2.size()).sum();
 

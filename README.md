@@ -1,5 +1,5 @@
 # Plane Seg ![CI](https://github.com/ori-drs/plane_seg/workflows/CI/badge.svg)
-
+# Minghan
 [![ANYmal climbing a real staircase](https://img.youtube.com/vi/YYs4lJ9t-Xo/0.jpg)](https://www.youtube.com/watch?v=YYs4lJ9t-Xo)
 
 *Plane Seg* is a library for fitting planes to LIDAR, depth camera data or elevation maps. It uses robust estimation to fit planes by clustering planar points with similar normals.

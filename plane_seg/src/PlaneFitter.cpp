@@ -30,6 +30,14 @@ struct SimpleProblemBase {
   int getSampleSize() const { return 3; }
   int getNumDataPoints() const { return mPoints.rows(); }
 
+  // This function is to fit a plane with mPoints of iIndices
+  // If we only use 3 points (iIndices.size() == 3), we can get a unique plane directly,
+  // but if we use more than 3 points, we need to use SVD to get a plane
+  // If we only use 3 points A, B, C to fit a plane n*X + d = 0, 
+  // where n = (a, b, c), X = (x, y, z)
+  // normal n is perpendicular with both AB and AC, so we get sol.mPlane.head<3>()
+  // d = -n*X, here X can be any points of the three, so we get sol.mPlane[3]
+  // centerDist evaluate the center point X_C, if |n*X_C + d| is to large, discard the plane by giving it a large d
   Solution estimate(const std::vector<int>& iIndices) const {
     Solution sol;
     const int n = iIndices.size();
@@ -82,6 +90,7 @@ struct SimpleProblemBase {
   }
 };
 
+// here we can fit the plane with only two of mPoints, and the center of mPoints
 struct SimpleProblem : public SimpleProblemBase {
   SimpleProblem(const std::vector<Eigen::Vector3f>& iPoints) :
     SimpleProblemBase(iPoints) {}
@@ -163,6 +172,18 @@ go(const std::vector<Eigen::Vector3f>& iPoints) const {
 template<typename T>
 PlaneFitter::Result PlaneFitter::
 solve(const std::vector<Eigen::Vector3f>& iPoints) const {
+  /*
+  This function is to find the plane estimation with iPoints by RANSAC.
+  RansacGeneric defined in RansacGeneric.hpp, 
+  the problem to be solved is <SimpleProblemBase> or <SimpleProblem> with iPoints as input.
+
+  Argument:
+  iPoints: the points we use to fit a plane
+
+  Return:
+  result: THe result defined as struct Result in the class PlaneFitter.
+  */
+
   Result result;
   drc::RansacGeneric<T> ransac;
   ransac.setMaximumError(mMaxDistance);

@@ -18,11 +18,13 @@ public:
     Eigen::Isometry3f mPose;
     std::vector<Eigen::Vector3f> mHull;
   };
+
   struct Result {
     bool mSuccess;
     std::vector<Block> mBlocks;
     Eigen::Vector4f mGroundPlane;
     std::vector<Eigen::Vector3f> mGroundPolygon;
+    LabeledCloud::Ptr filttedCloud; // to view the filtted cloud
   };
 
 public:

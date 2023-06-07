@@ -86,7 +86,7 @@ class Pass{
     std::vector<double> colors_;
 
     ros::Subscriber point_cloud_sub_, grid_map_sub_, pose_sub_;
-    ros::Publisher received_cloud_pub_, hull_cloud_pub_, hull_markers_pub_, look_pose_pub_, hull_marker_array_pub_;
+    ros::Publisher received_cloud_pub_, filtted_cloud_pub_, hull_cloud_pub_, hull_markers_pub_, look_pose_pub_, hull_marker_array_pub_;
 
     std::string fixed_frame_ = "odom";  // Frame in which all results are published. "odom" for backwards-compatibility. Likely should be "map".
 
@@ -100,12 +100,17 @@ Pass::Pass(ros::NodeHandle node_):
     node_(node_),
     tfBuffer_(ros::Duration(5.0)),
     tfListener_(tfBuffer_) {
-  grid_map_sub_ = node_.subscribe("/elevation_mapping/elevation_map", 100,
+  grid_map_sub_ = node_.subscribe("/os_sensor", 100,
                                     &Pass::elevationMapCallback, this);
-  point_cloud_sub_ = node_.subscribe("/plane_seg/point_cloud_in", 100,
+  point_cloud_sub_ = node_.subscribe("/ouster/points2", 100,
                                     &Pass::pointCloudCallback, this);
+  // grid_map_sub_ = node_.subscribe("/elevation_mapping/elevation_map", 100,
+  //                                   &Pass::elevationMapCallback, this);
+  // point_cloud_sub_ = node_.subscribe("/plane_seg/point_cloud_in", 100,
+  //                                   &Pass::pointCloudCallback, this);
 
   received_cloud_pub_ = node_.advertise<sensor_msgs::PointCloud2>("/plane_seg/received_cloud", 10);
+  filtted_cloud_pub_ = node_.advertise<sensor_msgs::PointCloud2>("/plane_seg/filtted_cloud", 10);
   hull_cloud_pub_ = node_.advertise<sensor_msgs::PointCloud2>("/plane_seg/hull_cloud", 10);
   hull_markers_pub_ = node_.advertise<visualization_msgs::Marker>("/plane_seg/hull_markers", 10);
   hull_marker_array_pub_ = node_.advertise<visualization_msgs::MarkerArray>("/plane_seg/hull_marker_array", 10);
@@ -143,6 +148,11 @@ Pass::Pass(ros::NodeHandle node_):
 
 }
 
+// from one frame to another frame: 
+// R^(3*3)
+// Quaternion: qx, qy, qz, qw
+// roll, pitch and yaw
+// convert Quaterniond to roll, pitch and yaw
 void quat_to_euler(const Eigen::Quaterniond& q, double& roll, double& pitch, double& yaw) {
   const double q0 = q.w();
   const double q1 = q.x();
@@ -153,8 +163,9 @@ void quat_to_euler(const Eigen::Quaterniond& q, double& roll, double& pitch, dou
   yaw = atan2(2.0*(q0*q3+q1*q2), 1.0-2.0*(q2*q2+q3*q3));
 }
 
-Eigen::Vector3f convertRobotPoseToSensorLookDir(Eigen::Isometry3d robot_pose){
-
+// convert robot rotation pose (Quaternion) to roll, pitch and yaw
+// (xDir, yDir, zDir) is the projection of a point in original frame to the new frame
+Eigen::Vector3f convertRobotPoseToSensorLookDir(Eigen::Isometry3d robot_pose) {
   Eigen::Quaterniond quat = Eigen::Quaterniond( robot_pose.rotation() );
   double r,p,y;
   quat_to_euler(quat, r, p, y);
@@ -168,21 +179,24 @@ Eigen::Vector3f convertRobotPoseToSensorLookDir(Eigen::Isometry3d robot_pose){
   return Eigen::Vector3f(xDir, yDir, zDir);
 }
 
-
+// elevation map call back function
 void Pass::elevationMapCallback(const grid_map_msgs::GridMap& msg){
   //std::cout << "got grid map / ev map\n";
 
   // convert message to GridMap, to PointCloud to LabeledCloud
   grid_map::GridMap map;
   grid_map::GridMapRosConverter::fromMessage(msg, map);
+
   sensor_msgs::PointCloud2 pointCloud;
   grid_map::GridMapRosConverter::toPointCloud(map, "elevation", pointCloud);
+
   planeseg::LabeledCloud::Ptr inCloud(new planeseg::LabeledCloud());
   pcl::fromROSMsg(pointCloud,*inCloud);
 
   // Expressed in is first argument
   if (tfBuffer_.canTransform(fixed_frame_, map.getFrameId(), msg.info.header.stamp, ros::Duration(0.02)))
   {
+    // this function is to find transformation from fixed_frame_ to the captured map
     // Look up transform of elevation map frame when it was captured
     geometry_msgs::TransformStamped fixed_frame_to_elevation_map_frame_tf;
     Eigen::Isometry3d map_T_elevation_map;
@@ -212,9 +226,12 @@ void Pass::pointCloudCallback(const sensor_msgs::PointCloud2::ConstPtr &msg){
   planeseg::LabeledCloud::Ptr inCloud(new planeseg::LabeledCloud());
   pcl::fromROSMsg(*msg,*inCloud);
 
-  // Look up transform from fixed frame to point cloud frame
+  // Look up transform from fixed frame to point cloud frame (?)
+  // "msg->header.frame_id" is the frame where the data originated 
+  // I think the process should tarnsform the point cloud data to a fixed frame
   geometry_msgs::TransformStamped fixed_frame_to_cloud_frame_tf;
-  Eigen::Isometry3d map_T_pointcloud;
+  Eigen::Isometry3d map_T_pointcloud = Eigen::Isometry3d::Identity();
+
   if (tfBuffer_.canTransform(fixed_frame_, msg->header.frame_id, msg->header.stamp, ros::Duration(0.0)))
   {
     fixed_frame_to_cloud_frame_tf = tfBuffer_.lookupTransform(fixed_frame_, msg->header.frame_id, msg->header.stamp, ros::Duration(0.0));
@@ -245,18 +262,26 @@ void Pass::processFromFile(int test_example){
     inFile = home_dir + "/data/terrain/tilted-steps.pcd";
     origin <<0.248091, 0.012443, 1.806473;
     lookDir <<0.837001, 0.019831, -0.546842;
+    // origin << 100, 100, 100;
+    // lookDir << 100, 100, 100;
   }else if (test_example == 1){ // LIDAR example from Atlas during DRC
     inFile = home_dir + "/data/terrain/terrain_med.pcd";
     origin << -0.028862, -0.007466, 0.087855;
     lookDir << 0.999890, -0.005120, -0.013947;
+    // origin << 100, 100, 100;
+    // lookDir << 100, 100, 100;
   }else if (test_example == 2){ // LIDAR example from Atlas during DRC
     inFile = home_dir + "/data/terrain/terrain_close_rect.pcd";
     origin << -0.028775, -0.005776, 0.087898;
     lookDir << 0.999956, -0.005003, 0.007958;
+    // origin << 100, 100, 100;
+    // lookDir << 100, 100, 100;
   }else if (test_example == 3){ // RGBD (Realsense D435) example from ANYmal
     inFile = home_dir + "/data/terrain/anymal/ori_entrance_stair_climb/06.pcd";
     origin << -0.028775, -0.005776, 0.987898;
     lookDir << 0.999956, -0.005003, 0.007958;
+    // origin << 100, 100, 100;
+    // lookDir << 100, 100, 100;
   }else if (test_example == 4){ // Leica map
     inFile = home_dir + "/data/leica/race_arenas/RACE_crossplaneramps_sub1cm_cropped_meshlab_icp.ply";
     origin << -0.028775, -0.005776, 0.987898;
@@ -297,7 +322,7 @@ void Pass::processCloud(const std::string& cloudFrame, planeseg::LabeledCloud::P
   planeseg::BlockFitter fitter;
   fitter.setSensorPose(origin, lookDir);
   fitter.setCloud(inCloud);
-  fitter.setDebug(false); // MFALLON modification
+  fitter.setDebug(true); // MFALLON modification
   fitter.setRemoveGround(false); // MFALLON modification from default
 
   // this was 5 for LIDAR. changing to 10 really improved elevation map segmentation
@@ -305,10 +330,14 @@ void Pass::processCloud(const std::string& cloudFrame, planeseg::LabeledCloud::P
   fitter.setMaxAngleOfPlaneSegmenter(10);
 
   result_ = fitter.go();
+
 #ifdef WITH_TIMING
   auto toc_1 = std::chrono::high_resolution_clock::now();
 #endif
 
+  // publish a geometry_msgs::PoseStamped message
+  // std_msgs/Header header
+  // geometry_msgs/Pose pose
   if (look_pose_pub_.getNumSubscribers() > 0) {
     Eigen::Vector3f rz = lookDir;
     Eigen::Vector3f rx = rz.cross(Eigen::Vector3f::UnitZ());
@@ -329,7 +358,9 @@ void Pass::processCloud(const std::string& cloudFrame, planeseg::LabeledCloud::P
     look_pose_pub_.publish(msg);
   }
 
+  // publish the sensor data
   if (received_cloud_pub_.getNumSubscribers() > 0) {
+    // This message is published correctly
     sensor_msgs::PointCloud2 output;
     pcl::toROSMsg(*inCloud, output);
     output.header.stamp = ros::Time(0, 0);
@@ -337,6 +368,17 @@ void Pass::processCloud(const std::string& cloudFrame, planeseg::LabeledCloud::P
     received_cloud_pub_.publish(output);
   }
 
+  // publish the sensor data
+  if (filtted_cloud_pub_.getNumSubscribers() > 0) {
+    // This message is published correctly
+    sensor_msgs::PointCloud2 output;
+    pcl::toROSMsg(*result_.filttedCloud, output);
+    output.header.stamp = ros::Time(0, 0);
+    output.header.frame_id = cloudFrame;
+    filtted_cloud_pub_.publish(output);
+  }
+
+  // publish fitting result in cloudFrame
   publishResult(cloudFrame);
 
 #ifdef WITH_TIMING
@@ -382,10 +424,14 @@ void Pass::printResultAsJson(){
 void Pass::publishResult(const std::string& cloud_frame){
   // convert result to a vector of point clouds
   std::vector< pcl::PointCloud<pcl::PointXYZ>::Ptr > cloud_ptrs;
+
   for (size_t i=0; i<result_.mBlocks.size(); ++i){
     pcl::PointCloud<pcl::PointXYZ> cloud;
     const auto& block = result_.mBlocks[i];
     cloud.points.reserve(block.mHull.size());
+    // std::cout << "block results: " << result_.mBlocks.size() << ", " << block.mHull.size() << std::endl;
+
+    if (block.mHull.size() == 0) continue;
     for (size_t j =0; j < block.mHull.size(); ++j){
       pcl::PointXYZ pt;
       pt.x =block.mHull[j](0);
@@ -416,6 +462,7 @@ void Pass::publishHullsAsCloud(const std::string& cloud_frame,
                                std::vector< pcl::PointCloud<pcl::PointXYZ>::Ptr > cloud_ptrs,
                                int secs, int nsecs){
   pcl::PointCloud<pcl::PointXYZRGB> combined_cloud;
+
   for (size_t i=0; i<cloud_ptrs.size(); ++i){
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb (new pcl::PointCloud<pcl::PointXYZRGB>);
     pcl::copyPointCloud(*cloud_ptrs[i], *cloud_rgb);
@@ -424,6 +471,7 @@ void Pass::publishHullsAsCloud(const std::string& cloud_frame,
     double r = colors_[nColor*3]*255.0;
     double g = colors_[nColor*3+1]*255.0;
     double b = colors_[nColor*3+2]*255.0;
+    
     for (size_t j = 0; j < cloud_rgb->points.size (); j++){
         cloud_rgb->points[j].r = r;
         cloud_rgb->points[j].g = g;
@@ -432,6 +480,7 @@ void Pass::publishHullsAsCloud(const std::string& cloud_frame,
     combined_cloud += *cloud_rgb;
   }
 
+  std::cout << "size of combined cloud: " << combined_cloud.size() << std::endl; // new
   sensor_msgs::PointCloud2 output;
   pcl::toROSMsg(combined_cloud, output);
 
@@ -611,7 +660,8 @@ int main( int argc, char** argv ){
 
 
   ros::init(argc, argv, "plane_seg");
-  ros::NodeHandle nh("~");
+  ros::NodeHandle nh("~"); // new
+  Pass pass_pt (nh); // new
   std::unique_ptr<Pass> app = std::make_unique<Pass>(nh);
 
   ROS_INFO_STREAM("plane_seg ros ready");
@@ -638,7 +688,18 @@ int main( int argc, char** argv ){
   }
 
   ROS_INFO_STREAM("Waiting for ROS messages");
+  // ros::Subscriber grid_map_sub_ = nh.subscribe("/os_sensor", 100,
+  //                                   &Pass::elevationMapCallback, &pass_pt);
+  ros::Subscriber point_cloud_sub_ = nh.subscribe ("/ouster/points", 100,
+                                    &Pass::pointCloudCallback, &pass_pt); // new
   ros::spin();
+  // new
+  // ros::Rate loop_rate (30);
+  // while (ros::ok ())
+  // {
+  //   ros::spinOnce ();
+  //   loop_rate.sleep ();
+  // }
 
   return 1;
 }

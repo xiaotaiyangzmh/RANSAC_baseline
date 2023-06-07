@@ -50,9 +50,11 @@ setData(const MatrixX3f& iPoints, const Eigen::Vector4f& iPlane) {
 
 RectangleFitter::Result
 RectangleFitter::go() {
-  // project points onto plane
+  // project mPoints onto mPlane, mPlane is the approximate parameters of points mPoints
   Eigen::VectorXf distances = (mPoints*mPlane.head<3>()).array() + mPlane[3];
   MatrixX3f points = mPoints - distances*mPlane.head<3>().transpose();
+  // std::cout << points << ", " << std::endl;
+  // std::cout << points.rows() << ", " << std::endl;
 
   // copy points into cloud
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud
